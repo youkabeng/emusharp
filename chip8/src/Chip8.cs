@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace EmuSharp.Chip8
 {
@@ -23,9 +25,10 @@ namespace EmuSharp.Chip8
         private ushort[] STACK = new ushort[0x0F];
 
         // Monochrome display
-        private const byte displayWidth = 64;
-        private const byte displayHeight = 32;
-        private bool[,] DISPLAY = new bool[displayHeight, displayWidth];
+        private const byte DISPLAY_WIDTH = 64;
+        private const byte DISPLAY_HEIGHT = 32;
+        private bool[,] DISPLAY = new bool[DISPLAY_HEIGHT, DISPLAY_WIDTH];
+        private bool needRedraw = false;
 
         // Time register
         private byte DT;
@@ -35,6 +38,9 @@ namespace EmuSharp.Chip8
 
         // Random
         Random random = new Random();
+
+        // Keys that are currently pressed
+        HashSet<byte> pressedKeys = new HashSet<byte>();
 
         public Chip8()
         {
@@ -55,9 +61,9 @@ namespace EmuSharp.Chip8
         // Clears the screen
         void CLS()
         {
-            for (var i = 0; i < displayHeight; i++)
+            for (var i = 0; i < DISPLAY_HEIGHT; i++)
             {
-                for (var j = 0; j < displayWidth; j++)
+                for (var j = 0; j < DISPLAY_WIDTH; j++)
                 {
                     DISPLAY[i, j] = false;
                 }
@@ -190,7 +196,7 @@ namespace EmuSharp.Chip8
         {
             V[0xF] = (byte)((V[data.X] & 0x1) != 0 ? 1 : 0);
             V[data.X] >>= 1;
-        } 
+        }
 
         // 8XY7
         // Sets VX to VY minus VX, VF is set to 0 when there's a borrow, and 1 when there isn't
@@ -212,20 +218,22 @@ namespace EmuSharp.Chip8
         // Skip next instruction if VX != VY
         void skipIfVXNotEqualsToVY(Opcode data)
         {
-            if(V[data.X] != V[data.Y]) {
+            if (V[data.X] != V[data.Y])
+            {
                 PC += 2;
             }
         }
 
         // ANNN
         // Sets I to the address NNN
-        void setIToNNN(Opcode data) {
+        void setIToNNN(Opcode data)
+        {
             I = data.NNN;
         }
 
         // BNNN
         // Jumps to the address NNN plus V0
-        void jumpToNNNPlusV0(Opcode data) 
+        void jumpToNNNPlusV0(Opcode data)
         {
             PC = (ushort)(data.NNN + V[0]);
         }
@@ -235,6 +243,97 @@ namespace EmuSharp.Chip8
         void setVXToRandAndNN(Opcode data)
         {
             V[data.X] = (byte)(random.Next(0, 256) & data.NN);
+        }
+
+        // DXYN
+        // Draws a sprite at coordinate (VX, VY) that has a width of 8 pixels and a height of N+1 pixels.
+        // Each row of 8 pixels is read as bit-coded starting from memory location I; I value does not change after the execution of this instruction.
+        // As described above, VF is set to 1 if any screen pixels are flipped from set to unset when the sprite is drawn, and to 0 if that does not happen
+        void drawSpriteAtVXVY(Opcode data)
+        {
+            var startX = V[data.X];
+            var startY = V[data.Y];
+            V[0xF] = 0;
+            for (var i = 0; i < data.N; i++)
+            {
+                var spriteLine = RAM[I + i];
+                for (var bit = 0; bit < 8; bit++)
+                {
+                    var x = (startX + bit) % DISPLAY_WIDTH;
+                    var y = (startY + i) % DISPLAY_HEIGHT;
+
+                    var spriteBit = ((spriteLine >> (7 - bit)) & 1);
+                    var oldBit = DISPLAY[x, y] ? 1 : 0;
+                    if (spriteBit != oldBit)
+                        needRedraw = true;
+
+                    var newBit = oldBit ^ spriteBit;
+
+                    DISPLAY[x, y] = newBit != 0;
+
+                    if (oldBit != 0 && newBit == 0)
+                        V[0xF] = 1;
+                }
+            }
+        }
+
+        // EX9E
+        // Skips the next instruction if the key stored in VX is pressed.
+        void skipIfKeyIsPressed(Opcode data)
+        {
+            if (pressedKeys.Contains(V[data.X]))
+                PC += 2;
+        }
+
+        // EXA1
+        // Skips the next instruction if the key stored in VX is not pressed.
+        void skipIfKeyIsNotPressed(Opcode data)
+        {
+            if (!pressedKeys.Contains(V[data.X]))
+                PC += 2;
+        }
+
+        // FX07
+        // Sets VX to the value of delay timer
+        void setVXToDelayTimer(Opcode data)
+        {
+            V[data.X] = DT;
+        }
+
+        // FX0A
+        // A key press is awaited, and then stores in VX. (Blocking Operation. All instruction halted until next key event)
+        void waitForKey(Opcode data)
+        {
+            if (pressedKeys.Count != 0)
+            {
+                V[data.X] = pressedKeys.First();
+            }
+            else
+            {
+                // if not meet the condition, go back to last instruction and wait again.
+                PC -= 2;
+            }
+        }
+
+        // FX15
+        // Sets the delay timer to VX.
+        void setDelayTimerToVX(Opcode data)
+        {
+            DT = V[data.X];
+        }
+
+        // FX18
+        // Sets the sound timer to VX.
+        void setSoundTimerToVX(Opcode data)
+        {
+            ST = V[data.X];
+        }
+
+        // FX1E
+        // Adds VX to I. VF is not affected
+        void addVXToI(Opcode data)
+        {
+            I += V[data.X];
         }
 
         void push(ushort value)
