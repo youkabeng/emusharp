@@ -336,6 +336,38 @@ namespace EmuSharp.Chip8
             I += V[data.X];
         }
 
+        // FX29
+        // Sets I to the location of the sprite for the character in VX. Characters 0-F (in hexadecimal) are represented by a 4x5 font.
+        void setIToCharacterVX(Opcode data)
+        {
+            I = (ushort)(V[data.X] * 5);
+        }
+
+        // FX33
+        // Stores the binary-coded decimal representation of VX
+        void storeBinaryCodedDecimal(Opcode data)
+        {
+            RAM[I + 0] = (byte)((V[data.X] / 100) % 10);
+            RAM[I + 1] = (byte)((V[data.X] / 10) % 10);
+            RAM[I + 2] = (byte)(V[data.X] % 10);
+        }
+
+        // FX55
+        // Stores V0 to VX (including VX) in memory starting at address I. The offset from I is increased by 1 for each value written, but I itself is left unmodified
+        void saveVXToRAM(Opcode data)
+        {
+            for (var i = 0; i <= data.X; i++)
+                RAM[I + i] = V[i];
+        }
+
+        // FX65
+        // Fills V0 to VX (including VX) with values from memory starting at address I. The offset from I is increased by 1 for each value written, but I itself is left unmodified
+        void loadVXFromRAM(Opcode data)
+        {
+            for (var i = 0; i <= data.X; i++)
+                V[i] = RAM[I + i];
+        }
+
         void push(ushort value)
         {
             STACK[SP++] = value;
