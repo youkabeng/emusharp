@@ -16,7 +16,7 @@ namespace EmuSharp.Chip8
         private ushort I;
 
         // The program counter is used to store the currently executing address
-        private ushort PC;
+        private ushort PC = 0x200;
 
         // The stack pointer is used to point to the topmost level of the stack
         private byte SP;
@@ -42,9 +42,30 @@ namespace EmuSharp.Chip8
         // Keys that are currently pressed
         HashSet<byte> pressedKeys = new HashSet<byte>();
 
+        // Opcode to method
+        Dictionary<byte, Action<Opcode>> opMappings;
+
         public Chip8()
         {
-            PC = 0x200;
+            opMappings = new Dictionary<byte, Action<Opcode>>()
+            {
+                {0x0, executeOpcode0},
+                {0x1, jumpToNNN},
+                {0x2, callSubroutineAtNNN},
+                {0x3, skipIfVXEqualsToNN},
+                {0x4, skipIfVXNotEqualsToNN},
+                {0x5, skipIfVXEqualsToVY},
+                {0x6, setVXToNN},
+                {0x7, addNNToVX},
+                {0x8, executeOpcode8},
+                {0x9, skipIfVXNotEqualsToVY},
+                {(byte)0xA, setIToNNN},
+                {(byte)0xB, jumpToNNNPlusV0},
+                {(byte)0xC, setVXToRandAndNN},
+                {(byte)0xD, drawSpriteAtVXVY},
+                {(byte)0xE, waitForKey},
+                {(byte)0xF, executeOpcodeF},
+            };
         }
 
         public void LoadProgram(byte[] data) => Array.Copy(data, 0, RAM, 0x200, data.Length);
@@ -52,14 +73,105 @@ namespace EmuSharp.Chip8
         public void Tick()
         {
             // Fetch Opcode
+            // Read the two bytes of opcode (big endian)
+            var opcode = (ushort)(RAM[PC++] << 8 | RAM[PC++]);
             // Decode Opcode
-            // Execute Opcode
-            // Update timers
+            var op = new Opcode()
+            {
+                code = opcode,
+                NNN = (ushort)(opcode & 0x0FFF),
+                NN = (byte)(opcode & 0x00FF),
+                N = (byte)(opcode & 0x000F),
+                X = (byte)((opcode & 0x0F00) >> 8),
+                Y = (byte)((opcode & 0x00F0) >> 4),
+            };
+        }
+
+        void execute(Opcode data)
+        {
+            var n = (byte)(data.code >> 12);
+            opMappings[n](data);
+        }
+
+        void executeOpcode0(Opcode data)
+        {
+            if (data.code == 0xE0)
+            {
+                clearScreen();
+            }
+            else if (data.code == 0xEE)
+            {
+                ret();
+            }
+            else
+            {
+                callMachineRoutineAtNNN(data.NNN);
+            }
+        }
+
+        void executeOpcode8(Opcode data)
+        {
+            if (data.N == 0x0)
+            {
+                setVXToVY(data);
+            }
+            else if (data.N == 0x1)
+            {
+                setVXToVXOrVY(data);
+            }
+            else if (data.N == 0x2)
+            {
+                setVXToVXAndVY(data);
+            }
+            else if (data.N == 0x3)
+            {
+                setVXToVXXorVY(data);
+            }
+            else if (data.N == 0x4)
+            {
+                addVYToVX(data);
+            }
+            else if (data.N == 0x5)
+            {
+                subtractVYFromVX(data);
+            }
+            else if (data.N == 0x6)
+            {
+                rightShiftVX(data);
+            }
+            else if (data.N == 0x7)
+            {
+                setVXToVYSubtractVX(data);
+            }
+            else if (data.N == 0xE)
+            {
+                leftShiftVX(data);
+            }
+        }
+
+        void executeOpcodeF(Opcode data)
+        {
+            if (data.NN == 0x29)
+            {
+                setIToCharacterVX(data);
+            }
+            else if (data.NN == 0x33)
+            {
+                storeBinaryCodedDecimal(data);
+            }
+            else if (data.NN == 0x55)
+            {
+                saveVXToRAM(data);
+            }
+            else if (data.NN == 0x65)
+            {
+                loadVXFromRAM(data);
+            }
         }
 
         // 00E0
         // Clears the screen
-        void CLS()
+        void clearScreen()
         {
             for (var i = 0; i < DISPLAY_HEIGHT; i++)
             {
@@ -72,7 +184,7 @@ namespace EmuSharp.Chip8
 
         // 00EE
         // Returns from a subroutine
-        void RET()
+        void ret()
         {
             PC = pop();
         }
@@ -199,8 +311,8 @@ namespace EmuSharp.Chip8
         }
 
         // 8XY7
-        // Sets VX to VY minus VX, VF is set to 0 when there's a borrow, and 1 when there isn't
-        void setVXToVYMinusVX(Opcode data)
+        // Sets VX to VY subtract VX, VF is set to 0 when there's a borrow, and 1 when there isn't
+        void setVXToVYSubtractVX(Opcode data)
         {
             V[0xF] = (byte)(V[data.Y] > V[data.X] ? 1 : 0);
             V[data.X] = (byte)(V[data.Y] - V[data.X]);
